@@ -3,9 +3,9 @@
  * QQ: 319641317
  * Github: https://github.com/GoldenglowSusie/
  * Bilibili: 罗德岛T0驭械术师澄闪
- * 
+ *
  * Chief Tester: 汐木泽
- * 
+ *
  * Co-developed with AI assistants:
  * - Cursor
  * - Claude-4.5-Sonnet
@@ -15,7 +15,6 @@
 
 package com.tgwgroup.MiRearScreenSwitcher;
 
-import android.app.ActivityOptions;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.ServiceConnection;
@@ -26,7 +25,6 @@ import android.service.quicksettings.Tile;
 import android.service.quicksettings.TileService;
 import android.util.Log;
 import android.widget.Toast;
-import rikka.shizuku.Shizuku;
 
 /**
  * Quick Settings Tile - 切换至背屏
@@ -39,13 +37,6 @@ public class SwitchToRearTileService extends TileService {
     private static String lastMovedTask = null; // 格式: "packageName:taskId"
 
     private ITaskService taskService;
-    private final Shizuku.UserServiceArgs serviceArgs = new Shizuku.UserServiceArgs(
-            new ComponentName("com.tgwgroup.MiRearScreenSwitcher", TaskService.class.getName()))
-            .daemon(false)
-            .processNameSuffix("task_service")
-            .debuggable(false)
-            .version(1);
-
     private final ServiceConnection taskServiceConnection = new ServiceConnection() {
         @Override
         public void onServiceConnected(ComponentName name, IBinder binder) {
@@ -87,10 +78,7 @@ public class SwitchToRearTileService extends TileService {
         Tile tile = getQsTile();
         if (tile != null) {
             tile.setState(Tile.STATE_INACTIVE);
-            tile.setSubtitle(null);
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                tile.setStateDescription("");
-            }
+            TileFeedback.setSubtitle(tile, null);
             tile.updateTile();
         }
 
@@ -114,7 +102,7 @@ public class SwitchToRearTileService extends TileService {
 
     /**
      * 获取最后移动到背屏的任务信息
-     * 
+     *
      * @return 格式: "packageName:taskId"，如果没有则返回null
      */
     public static String getLastMovedTask() {
@@ -133,32 +121,19 @@ public class SwitchToRearTileService extends TileService {
         }
 
         try {
-            if (!Shizuku.pingBinder()) {
-                Log.e(TAG, "Shizuku not available");
-                return;
-            }
-
-            if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
-                Log.e(TAG, "No Shizuku permission");
-                return;
-            }
-
-            Shizuku.bindUserService(serviceArgs, taskServiceConnection);
-
+            PrivilegedAccess.bindTaskService(taskServiceConnection);
         } catch (Exception e) {
             Log.e(TAG, "Failed to bind TaskService", e);
         }
     }
 
     private void unbindTaskService() {
-        if (taskService != null) {
-            try {
-                Shizuku.unbindUserService(serviceArgs, taskServiceConnection, true);
-            } catch (Exception e) {
-                Log.e(TAG, "Error unbinding TaskService", e);
-            }
-            taskService = null;
+        try {
+            PrivilegedAccess.unbindTaskService(taskServiceConnection);
+        } catch (Exception e) {
+            Log.e(TAG, "Error unbinding TaskService", e);
         }
+        taskService = null;
     }
 
     private void switchCurrentAppToRearDisplay() {
@@ -188,11 +163,8 @@ public class SwitchToRearTileService extends TileService {
         Tile tile = getQsTile();
         if (tile != null) {
             tile.setState(Tile.STATE_INACTIVE); // 保持熄灭状态
-            tile.setSubtitle("切换中...");
+            TileFeedback.setSubtitle(tile, "切换中...");
             // 不显示"已开启"
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                tile.setStateDescription("");
-            }
             tile.updateTile();
         }
 
@@ -346,10 +318,7 @@ public class SwitchToRearTileService extends TileService {
         Tile tile = getQsTile();
         if (tile != null) {
             tile.setState(Tile.STATE_INACTIVE);
-            tile.setSubtitle(message);
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                tile.setStateDescription("");
-            }
+            TileFeedback.setSubtitle(tile, message);
             tile.updateTile();
         }
 
@@ -357,10 +326,7 @@ public class SwitchToRearTileService extends TileService {
             Tile resetTile = getQsTile();
             if (resetTile != null) {
                 resetTile.setState(Tile.STATE_INACTIVE);
-                resetTile.setSubtitle(null);
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                    resetTile.setStateDescription("");
-                }
+                TileFeedback.setSubtitle(resetTile, null);
                 resetTile.updateTile();
             }
         }, 1500);

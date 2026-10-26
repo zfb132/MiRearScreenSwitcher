@@ -17,7 +17,6 @@ package com.tgwgroup.MiRearScreenSwitcher;
 
 import android.app.IntentService;
 import android.content.ComponentName;
-import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.content.pm.ApplicationInfo;
@@ -28,7 +27,6 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.widget.Toast;
-import rikka.shizuku.Shizuku;
 
 /**
  * V2.6: URI命令处理服务
@@ -39,13 +37,6 @@ public class UriCommandService extends IntentService {
     private static final String TAG = "UriCommandService";
 
     private ITaskService taskService;
-    private final Shizuku.UserServiceArgs serviceArgs = new Shizuku.UserServiceArgs(
-            new ComponentName("com.tgwgroup.MiRearScreenSwitcher", TaskService.class.getName()))
-            .daemon(false)
-            .processNameSuffix("task_service")
-            .debuggable(false)
-            .version(1);
-
     private final ServiceConnection taskServiceConnection = new ServiceConnection() {
         @Override
         public void onServiceConnected(ComponentName name, IBinder binder) {
@@ -133,17 +124,7 @@ public class UriCommandService extends IntentService {
             return;
 
         try {
-            if (!Shizuku.pingBinder()) {
-                Log.e(TAG, "Shizuku不可用");
-                return;
-            }
-
-            if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
-                Log.e(TAG, "无Shizuku权限");
-                return;
-            }
-
-            Shizuku.bindUserService(serviceArgs, taskServiceConnection);
+            PrivilegedAccess.bindTaskService(taskServiceConnection);
         } catch (Exception e) {
             Log.e(TAG, "绑定TaskService失败", e);
         }
@@ -795,9 +776,9 @@ public class UriCommandService extends IntentService {
     public void onDestroy() {
         super.onDestroy();
 
-        if (taskService != null) {
+        {
             try {
-                Shizuku.unbindUserService(serviceArgs, taskServiceConnection, true);
+                PrivilegedAccess.unbindTaskService(taskServiceConnection);
             } catch (Exception e) {
                 Log.e(TAG, "解绑TaskService失败", e);
             }

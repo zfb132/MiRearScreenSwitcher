@@ -3,9 +3,9 @@
  * QQ: 319641317
  * Github: https://github.com/GoldenglowSusie/
  * Bilibili: 罗德岛T0驭械术师澄闪
- * 
+ *
  * Chief Tester: 汐木泽
- * 
+ *
  * Co-developed with AI assistants:
  * - Cursor
  * - Claude-4.5-Sonnet
@@ -17,13 +17,11 @@ package com.tgwgroup.MiRearScreenSwitcher;
 
 import android.content.ComponentName;
 import android.content.ServiceConnection;
-import android.graphics.drawable.Icon;
 import android.os.IBinder;
 import android.service.quicksettings.Tile;
 import android.service.quicksettings.TileService;
 import android.util.Log;
 import android.widget.Toast;
-import rikka.shizuku.Shizuku;
 
 /**
  * Quick Settings Tile - 获取背屏截图
@@ -33,13 +31,6 @@ public class RearScreenshotTileService extends TileService {
     private static final String TAG = "RearScreenshotTile";
 
     private ITaskService taskService;
-    private final Shizuku.UserServiceArgs serviceArgs = new Shizuku.UserServiceArgs(
-            new ComponentName("com.tgwgroup.MiRearScreenSwitcher", TaskService.class.getName()))
-            .daemon(false)
-            .processNameSuffix("task_service")
-            .debuggable(false)
-            .version(1);
-
     private final ServiceConnection taskServiceConnection = new ServiceConnection() {
         @Override
         public void onServiceConnected(ComponentName name, IBinder binder) {
@@ -81,10 +72,7 @@ public class RearScreenshotTileService extends TileService {
         Tile tile = getQsTile();
         if (tile != null) {
             tile.setState(Tile.STATE_INACTIVE);
-            tile.setSubtitle(null);
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                tile.setStateDescription("");
-            }
+            TileFeedback.setSubtitle(tile, null);
             tile.updateTile();
         }
 
@@ -147,12 +135,7 @@ public class RearScreenshotTileService extends TileService {
         }
 
         try {
-            if (!Shizuku.pingBinder()) {
-                Log.w(TAG, "Shizuku not available");
-                return;
-            }
-
-            Shizuku.bindUserService(serviceArgs, taskServiceConnection);
+            PrivilegedAccess.bindTaskService(taskServiceConnection);
         } catch (Exception e) {
             Log.e(TAG, "Failed to bind TaskService", e);
         }
@@ -162,10 +145,8 @@ public class RearScreenshotTileService extends TileService {
     public void onDestroy() {
         super.onDestroy();
         try {
-            if (taskService != null) {
-                Shizuku.unbindUserService(serviceArgs, taskServiceConnection, true);
-                taskService = null;
-            }
+            PrivilegedAccess.unbindTaskService(taskServiceConnection);
+            taskService = null;
         } catch (Exception e) {
             Log.e(TAG, "Error unbinding service", e);
         }
@@ -174,14 +155,14 @@ public class RearScreenshotTileService extends TileService {
     private void showTemporaryFeedback(String message) {
         Tile tile = getQsTile();
         if (tile != null) {
-            tile.setSubtitle(message);
+            TileFeedback.setSubtitle(tile, message);
             tile.updateTile();
 
             // 1秒后清除反馈
             new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
                 Tile t = getQsTile();
                 if (t != null) {
-                    t.setSubtitle(null);
+                    TileFeedback.setSubtitle(t, null);
                     t.updateTile();
                 }
             }, 1000);

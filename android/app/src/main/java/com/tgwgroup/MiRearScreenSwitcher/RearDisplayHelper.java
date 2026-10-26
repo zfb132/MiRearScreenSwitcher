@@ -45,7 +45,7 @@ public class RearDisplayHelper {
         
         @Override
         public String toString() {
-            return String.format("RearDisplayInfo{width=%d, height=%d, dpi=%d, cutout=%s}",
+            return String.format(java.util.Locale.ROOT, "RearDisplayInfo{width=%d, height=%d, dpi=%d, cutout=%s}",
                 width, height, densityDpi, cutout.toString());
         }
         
@@ -106,7 +106,7 @@ public class RearDisplayHelper {
             if (viewportMatcher.find()) {
                 info.width = Integer.parseInt(viewportMatcher.group(1));
                 info.height = Integer.parseInt(viewportMatcher.group(2));
-                Log.d(TAG, String.format("✓ 从mViewports解析分辨率: %dx%d", info.width, info.height));
+                Log.d(TAG, String.format(java.util.Locale.ROOT, "✓ 从mViewports解析分辨率: %dx%d", info.width, info.height));
             }
             
             // 方法2: 查找Display 1的DisplayDeviceInfo区块（包含cutout）
@@ -202,7 +202,7 @@ public class RearDisplayHelper {
             StringBuilder cutoutLines = new StringBuilder("📋 所有Cutout相关行：\n");
             boolean foundCutout = false;
             for (String line : lines) {
-                if (line.toLowerCase().contains("cutout")) {
+                if (line.toLowerCase(java.util.Locale.ROOT).contains("cutout")) {
                     cutoutLines.append("  ").append(line.trim()).append("\n");
                     foundCutout = true;
                 }
@@ -226,7 +226,7 @@ public class RearDisplayHelper {
                 cutout.top = Integer.parseInt(miuiMatcher.group(2));
                 cutout.right = Integer.parseInt(miuiMatcher.group(3));
                 cutout.bottom = Integer.parseInt(miuiMatcher.group(4));
-                Log.d(TAG, String.format("✓ 解析Cutout(MIUI格式): left=%d, top=%d, right=%d, bottom=%d",
+                Log.d(TAG, String.format(java.util.Locale.ROOT, "✓ 解析Cutout(MIUI格式): left=%d, top=%d, right=%d, bottom=%d",
                     cutout.left, cutout.top, cutout.right, cutout.bottom));
                 return cutout;
             }
@@ -240,7 +240,7 @@ public class RearDisplayHelper {
                 cutout.top = Integer.parseInt(standardMatcher.group(2));
                 cutout.right = Integer.parseInt(standardMatcher.group(3));
                 cutout.bottom = Integer.parseInt(standardMatcher.group(4));
-                Log.d(TAG, String.format("✓ 解析Cutout(标准格式): left=%d, top=%d, right=%d, bottom=%d",
+                Log.d(TAG, String.format(java.util.Locale.ROOT, "✓ 解析Cutout(标准格式): left=%d, top=%d, right=%d, bottom=%d",
                     cutout.left, cutout.top, cutout.right, cutout.bottom));
                 return cutout;
             }

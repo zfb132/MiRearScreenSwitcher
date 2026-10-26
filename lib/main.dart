@@ -13,14 +13,16 @@
  * - Gemini-2.5-Pro
  */
 
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'dart:async';
-import 'dart:ui';
 import 'dart:math' as math;
-import 'dart:typed_data';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:ui';
+
+import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
+import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
 import 'l10n/app_localizations.dart';
 
 void main() {
@@ -100,15 +102,16 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-enum ShizukuStatus { checking, running, error }
+enum PrivilegeStatus { checking, running, error }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   static const platform = MethodChannel('com.display.switcher/task');
 
   // Status Enum
-  ShizukuStatus _shizukuStatus = ShizukuStatus.checking;
-  bool _shizukuRunning = false;
-  // String _statusMessage = 'Checking Shizuku...'; // Removed
+  PrivilegeStatus _privilegeStatus = PrivilegeStatus.checking;
+  bool _privilegeRunning = false;
+  String _privilegeBackend = '';
+  bool _notificationPermissionRequested = false;
   String _customErrorTitle = ''; // For specific error types
   bool _isLoading = false;
   bool _hasError = false; // 是否有错误
@@ -144,15 +147,17 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-    _checkShizuku();
+    WidgetsBinding.instance.addObserver(this);
+    _checkPrivilege();
     _loadSettings(); // 加载所有设置
     _setupMethodCallHandler();
     _loadProximitySensorSetting(); // 加载接近传感器设置
 
-    // 通知权限会在Shizuku授权完成后自动请求（见_checkShizuku）
+    // 通知权限会在Shizuku授权完成后自动请求（见_checkPrivilege）
 
     // 延迟获取DPI和旋转，等待TaskService连接
     Future.delayed(const Duration(seconds: 2), () {
+      if (!mounted) return;
       _getCurrentRearDpi();
       _getCurrentRotation();
     });
@@ -160,22 +165,32 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    platform.setMethodCallHandler(null);
     _dpiController.dispose();
     _dpiFocusNode.dispose();
     super.dispose();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      platform.invokeMethod('refreshPrivilege');
+      _checkPrivilege();
+    }
+  }
+
   void _setupMethodCallHandler() {
     platform.setMethodCallHandler((call) async {
-      if (call.method == 'onShizukuPermissionChanged') {
+      if (call.method == 'onPrivilegePermissionChanged') {
         final granted = call.arguments as bool;
-        print('Shizuku permission changed: $granted');
+        debugPrint('Shizuku permission changed: $granted');
         // 刷新状态
-        await _checkShizuku();
+        await _checkPrivilege();
 
         // Shizuku授权完成后，立即请求通知权限
         if (granted) {
-          print('✓ Shizuku已授权，立即请求通知权限');
+          debugPrint('✓ 特权访问已授权，检查通知权限');
           _requestNotificationPermission();
         }
       }
@@ -183,17 +198,21 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _requestNotificationPermission() async {
+    if (_notificationPermissionRequested) return;
+    _notificationPermissionRequested = true;
     // Android 13+ 需要请求通知权限
     try {
       await platform.invokeMethod('requestNotificationPermission');
-      print('通知权限请求已发送');
+      debugPrint('通知权限请求已发送');
     } catch (e) {
-      print('请求通知权限失败: $e');
+      _notificationPermissionRequested = false;
+      debugPrint('请求通知权限失败: $e');
     }
   }
 
   // V15: 获取当前背屏DPI
   Future<void> _getCurrentRearDpi() async {
+    if (!mounted) return;
     setState(() {
       _dpiLoading = true;
     });
@@ -202,15 +221,16 @@ class _HomePageState extends State<HomePage> {
     for (int i = 0; i < 5; i++) {
       try {
         final int dpi = await platform.invokeMethod('getCurrentRearDpi');
+        if (!mounted) return;
         setState(() {
           _currentRearDpi = dpi;
           _dpiController.text = dpi.toString();
           _dpiLoading = false;
         });
-        print('当前背屏DPI: $dpi');
+        debugPrint('当前背屏DPI: $dpi');
         return; // 成功就退出
       } catch (e) {
-        print('获取背屏DPI失败 (尝试 ${i + 1}/5): $e');
+        debugPrint('获取背屏DPI失败 (尝试 ${i + 1}/5): $e');
         if (i < 4) {
           await Future.delayed(const Duration(seconds: 1));
         }
@@ -222,7 +242,7 @@ class _HomePageState extends State<HomePage> {
       _dpiLoading = false;
       _currentRearDpi = 0;
     });
-    print('获取背屏DPI最终失败');
+    debugPrint('获取背屏DPI最终失败');
   }
 
   // V15: 设置背屏DPI
@@ -255,7 +275,7 @@ class _HomePageState extends State<HomePage> {
         );
       }
     } catch (e) {
-      print('设置背屏DPI失败: $e');
+      debugPrint('设置背屏DPI失败: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -302,7 +322,7 @@ class _HomePageState extends State<HomePage> {
         );
       }
     } catch (e) {
-      print('还原背屏DPI失败: $e');
+      debugPrint('还原背屏DPI失败: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -319,35 +339,39 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<void> _checkShizuku() async {
+  Future<void> _checkPrivilege() async {
+    if (!mounted) return;
     setState(() {
-      _shizukuStatus = ShizukuStatus.checking;
+      _privilegeStatus = PrivilegeStatus.checking;
       _hasError = false;
       _errorDetail = '';
     });
 
     try {
       // 简化检查：直接调用Java层，增加超时
-      final result = await platform
-          .invokeMethod('checkShizuku')
+      final status = await platform
+          .invokeMapMethod<String, dynamic>('getPrivilegeStatus')
           .timeout(const Duration(seconds: 3));
 
       if (!mounted) return;
 
       setState(() {
-        _shizukuRunning = result == true;
+        _privilegeRunning = status?['granted'] == true;
+        _privilegeBackend = status?['backend'] as String? ?? '';
         _hasError = false;
         _errorDetail = '';
 
-        if (_shizukuRunning) {
-          _shizukuStatus = ShizukuStatus.running;
+        if (_privilegeRunning) {
+          _privilegeStatus = PrivilegeStatus.running;
 
           // Shizuku已授权，立即请求通知权限
-          print('✓ Shizuku已授权，立即请求通知权限');
+          debugPrint('✓ 特权访问已授权，检查通知权限');
           _requestNotificationPermission();
+        } else if (status?['checking'] == true) {
+          _privilegeStatus = PrivilegeStatus.checking;
         } else {
           _hasError = true;
-          _shizukuStatus = ShizukuStatus.error;
+          _privilegeStatus = PrivilegeStatus.error;
           _customErrorTitle = ''; // Use default "Permission Required"
           _errorDetail = AppLocalizations.of(
             context,
@@ -399,9 +423,9 @@ class _HomePageState extends State<HomePage> {
             : errorMsg;
       }
       setState(() {
-        _shizukuRunning = false;
+        _privilegeRunning = false;
         _hasError = true;
-        _shizukuStatus = ShizukuStatus.error;
+        _privilegeStatus = PrivilegeStatus.error;
         _customErrorTitle = errorType;
       });
     }
@@ -410,12 +434,18 @@ class _HomePageState extends State<HomePage> {
   Future<void> _getDetailedStatus() async {
     try {
       final info = await platform.invokeMethod('getShizukuInfo');
+      if (!mounted) return;
       setState(() {
         _errorDetail = info.toString();
       });
     } catch (e) {
       // 获取详细信息失败，保持当前错误信息
     }
+  }
+
+  Future<void> _requestPrivilegePermission() async {
+    await platform.invokeMethod('requestPrivilegePermission');
+    await _checkPrivilege();
   }
 
   // V2.1: 重启应用
@@ -449,6 +479,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _loadSettings() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      if (!mounted) return;
       setState(() {
         _proximitySensorEnabled =
             prefs.getBool('proximity_sensor_enabled') ?? true;
@@ -480,7 +511,7 @@ class _HomePageState extends State<HomePage> {
         _startNotificationService();
       }
     } catch (e) {
-      print('加载设置失败: $e');
+      debugPrint('加载设置失败: $e');
     }
   }
 
@@ -493,7 +524,7 @@ class _HomePageState extends State<HomePage> {
             prefs.getBool('proximity_sensor_enabled') ?? true;
       });
     } catch (e) {
-      print('加载接近传感器设置失败: $e');
+      debugPrint('加载接近传感器设置失败: $e');
     }
   }
 
@@ -505,9 +536,9 @@ class _HomePageState extends State<HomePage> {
       );
       // 只更新权限状态，不覆盖开关状态
       // _notificationEnabled 现在由 SharedPreferences 中的开关状态控制
-      print('通知监听权限状态: $hasPermission');
+      debugPrint('通知监听权限状态: $hasPermission');
     } catch (e) {
-      print('检查通知权限失败: $e');
+      debugPrint('检查通知权限失败: $e');
     }
   }
 
@@ -515,9 +546,9 @@ class _HomePageState extends State<HomePage> {
   Future<void> _startNotificationService() async {
     try {
       await platform.invokeMethod('startNotificationService');
-      print('NotificationService已启动');
+      debugPrint('NotificationService已启动');
     } catch (e) {
-      print('启动NotificationService失败: $e');
+      debugPrint('启动NotificationService失败: $e');
     }
   }
 
@@ -553,9 +584,9 @@ class _HomePageState extends State<HomePage> {
       setState(() {
         _notificationEnabled = enabled;
       });
-      print('背屏通知服务已${enabled ? "启用" : "禁用"}');
+      debugPrint('背屏通知服务已${enabled ? "启用" : "禁用"}');
     } catch (e) {
-      print('切换背屏通知服务失败: $e');
+      debugPrint('切换背屏通知服务失败: $e');
       // 切换失败，恢复原状态
       setState(() {
         _notificationEnabled = !enabled;
@@ -586,9 +617,9 @@ class _HomePageState extends State<HomePage> {
       setState(() {
         _proximitySensorEnabled = enabled;
       });
-      print('接近传感器已${enabled ? "启用" : "禁用"}');
+      debugPrint('接近传感器已${enabled ? "启用" : "禁用"}');
     } catch (e) {
-      print('切换接近传感器失败: $e');
+      debugPrint('切换接近传感器失败: $e');
       // 切换失败，恢复原状态
       setState(() {
         _proximitySensorEnabled = !enabled;
@@ -611,9 +642,9 @@ class _HomePageState extends State<HomePage> {
       setState(() {
         _chargingAnimationEnabled = enabled;
       });
-      print('充电动画已${enabled ? "启用" : "禁用"}');
+      debugPrint('充电动画已${enabled ? "启用" : "禁用"}');
     } catch (e) {
-      print('切换充电动画失败: $e');
+      debugPrint('切换充电动画失败: $e');
       // 切换失败，恢复原状态
       setState(() {
         _chargingAnimationEnabled = !enabled;
@@ -626,7 +657,7 @@ class _HomePageState extends State<HomePage> {
     try {
       await platform.invokeMethod('toggleChargingService', {'enabled': true});
     } catch (e) {
-      print('启动充电服务失败: $e');
+      debugPrint('启动充电服务失败: $e');
     }
   }
 
@@ -653,9 +684,9 @@ class _HomePageState extends State<HomePage> {
         _keepScreenOnEnabled = enabled;
         if (enabled) _alwaysWakeUpEnabled = false; // V3.5: 互斥关闭
       });
-      print('背屏常亮已${enabled ? "启用" : "禁用"}');
+      debugPrint('背屏常亮已${enabled ? "启用" : "禁用"}');
     } catch (e) {
-      print('切换背屏常亮失败: $e');
+      debugPrint('切换背屏常亮失败: $e');
       // 切换失败，恢复原状态
       setState(() {
         _keepScreenOnEnabled = !enabled;
@@ -686,9 +717,9 @@ class _HomePageState extends State<HomePage> {
         _alwaysWakeUpEnabled = enabled;
         if (enabled) _keepScreenOnEnabled = false; // V3.5: 互斥关闭
       });
-      print('未投放应用时常亮已${enabled ? "启用" : "禁用"}');
+      debugPrint('未投放应用时常亮已${enabled ? "启用" : "禁用"}');
     } catch (e) {
-      print('切换未投放应用时常亮失败: $e');
+      debugPrint('切换未投放应用时常亮失败: $e');
       // 切换失败，恢复原状态
       setState(() {
         _alwaysWakeUpEnabled = !enabled;
@@ -710,9 +741,9 @@ class _HomePageState extends State<HomePage> {
       setState(() {
         _chargingAlwaysOnEnabled = enabled;
       });
-      print('充电动画常亮已${enabled ? "启用" : "禁用"}');
+      debugPrint('充电动画常亮已${enabled ? "启用" : "禁用"}');
     } catch (e) {
-      print('切换充电动画常亮失败: $e');
+      debugPrint('切换充电动画常亮失败: $e');
       // 切换失败，恢复原状态
       setState(() {
         _chargingAlwaysOnEnabled = !enabled;
@@ -721,12 +752,12 @@ class _HomePageState extends State<HomePage> {
   }
 
   String _getDisplayStatus(BuildContext context) {
-    switch (_shizukuStatus) {
-      case ShizukuStatus.checking:
+    switch (_privilegeStatus) {
+      case PrivilegeStatus.checking:
         return AppLocalizations.of(context).translate('check_shizuku');
-      case ShizukuStatus.running:
-        return AppLocalizations.of(context).translate('status_ready');
-      case ShizukuStatus.error:
+      case PrivilegeStatus.running:
+        return '${AppLocalizations.of(context).translate('status_ready')} · $_privilegeBackend';
+      case PrivilegeStatus.error:
         return _customErrorTitle.isNotEmpty
             ? _customErrorTitle
             : AppLocalizations.of(context).translate('permission_required');
@@ -782,7 +813,7 @@ class _HomePageState extends State<HomePage> {
                 CustomPaint(
                   painter: _SquircleBorderPainter(
                     radius: _SquircleRadii.large,
-                    color: Colors.white.withOpacity(0.5),
+                    color: Colors.white.withValues(alpha: 0.5),
                     strokeWidth: 1.5,
                   ),
                   child: ClipPath(
@@ -793,7 +824,7 @@ class _HomePageState extends State<HomePage> {
                       filter: ImageFilter.blur(sigmaX: 0, sigmaY: 0),
                       child: Container(
                         decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.25),
+                          color: Colors.white.withValues(alpha: 0.25),
                         ),
                         padding: const EdgeInsets.all(16),
                         child: Column(
@@ -802,29 +833,53 @@ class _HomePageState extends State<HomePage> {
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
                                 Icon(
-                                  _shizukuRunning
+                                  _privilegeRunning
                                       ? Icons.check_circle
                                       : (_hasError
                                             ? Icons.error_outline
                                             : Icons.warning_rounded),
                                   size: 28,
-                                  color: _shizukuRunning
+                                  color: _privilegeRunning
                                       ? Colors.green
                                       : (_hasError
                                             ? Colors.red
                                             : Colors.orange),
                                 ),
                                 const SizedBox(width: 10),
-                                Text(
-                                  _getDisplayStatus(context),
-                                  style: const TextStyle(
-                                    fontSize: 16,
-                                    color: Colors.black87,
-                                    fontWeight: FontWeight.w500,
+                                Flexible(
+                                  child: Text(
+                                    _getDisplayStatus(context),
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                      fontSize: 16,
+                                      color: Colors.black87,
+                                      fontWeight: FontWeight.w500,
+                                    ),
                                   ),
                                 ),
                               ],
                             ),
+                            const SizedBox(height: 8),
+                            Text(
+                              AppLocalizations.of(
+                                context,
+                              ).translate('privilege_preference'),
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Colors.black54,
+                              ),
+                            ),
+                            if (!_privilegeRunning)
+                              TextButton.icon(
+                                onPressed: _requestPrivilegePermission,
+                                icon: const Icon(Icons.refresh),
+                                label: Text(
+                                  AppLocalizations.of(
+                                    context,
+                                  ).translate('grant_permission'),
+                                ),
+                              ),
                             if (_hasError && _errorDetail.isNotEmpty) ...[
                               const SizedBox(height: 8),
                               Text(
@@ -852,7 +907,7 @@ class _HomePageState extends State<HomePage> {
                     CustomPaint(
                       painter: _SquircleBorderPainter(
                         radius: _SquircleRadii.large,
-                        color: Colors.white.withOpacity(0.5),
+                        color: Colors.white.withValues(alpha: 0.5),
                         strokeWidth: 1.5,
                       ),
                       child: ClipPath(
@@ -863,7 +918,7 @@ class _HomePageState extends State<HomePage> {
                           filter: ImageFilter.blur(sigmaX: 0, sigmaY: 0),
                           child: Container(
                             decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.25),
+                              color: Colors.white.withValues(alpha: 0.25),
                             ),
                             padding: const EdgeInsets.all(20),
                             child: Column(
@@ -1097,6 +1152,28 @@ class _HomePageState extends State<HomePage> {
                                 const Divider(color: Colors.black26, height: 1),
                                 const SizedBox(height: 16),
 
+                                Text(
+                                  AppLocalizations.of(
+                                    context,
+                                  ).translate('rear_display_mode'),
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                Text(
+                                  AppLocalizations.of(
+                                    context,
+                                  ).translate('rear_display_mode_unavailable'),
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.black54,
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                                const Divider(color: Colors.black26, height: 1),
+                                const SizedBox(height: 16),
+
                                 // V2.1: 旋转控制
                                 Row(
                                   children: [
@@ -1137,7 +1214,7 @@ class _HomePageState extends State<HomePage> {
                     CustomPaint(
                       painter: _SquircleBorderPainter(
                         radius: _SquircleRadii.large,
-                        color: Colors.white.withOpacity(0.5),
+                        color: Colors.white.withValues(alpha: 0.5),
                         strokeWidth: 1.5,
                       ),
                       child: ClipPath(
@@ -1152,7 +1229,7 @@ class _HomePageState extends State<HomePage> {
                               vertical: 16,
                             ),
                             decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.25),
+                              color: Colors.white.withValues(alpha: 0.25),
                             ),
                             child: Row(
                               children: [
@@ -1186,7 +1263,7 @@ class _HomePageState extends State<HomePage> {
                 CustomPaint(
                   painter: _SquircleBorderPainter(
                     radius: _SquircleRadii.large,
-                    color: Colors.white.withOpacity(0.5),
+                    color: Colors.white.withValues(alpha: 0.5),
                     strokeWidth: 1.5,
                   ),
                   child: ClipPath(
@@ -1201,7 +1278,7 @@ class _HomePageState extends State<HomePage> {
                           vertical: 16,
                         ),
                         decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.25),
+                          color: Colors.white.withValues(alpha: 0.25),
                         ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1254,12 +1331,12 @@ class _HomePageState extends State<HomePage> {
                               Container(
                                 padding: const EdgeInsets.all(12),
                                 decoration: BoxDecoration(
-                                  color: Colors.orange.withOpacity(0.2),
+                                  color: Colors.orange.withValues(alpha: 0.2),
                                   borderRadius: BorderRadius.circular(
                                     _SquircleRadii.small,
                                   ),
                                   border: Border.all(
-                                    color: Colors.orange.withOpacity(0.4),
+                                    color: Colors.orange.withValues(alpha: 0.4),
                                     width: 1,
                                   ),
                                 ),
@@ -1293,7 +1370,7 @@ class _HomePageState extends State<HomePage> {
                 CustomPaint(
                   painter: _SquircleBorderPainter(
                     radius: _SquircleRadii.large,
-                    color: Colors.white.withOpacity(0.5),
+                    color: Colors.white.withValues(alpha: 0.5),
                     strokeWidth: 1.5,
                   ),
                   child: ClipPath(
@@ -1308,7 +1385,7 @@ class _HomePageState extends State<HomePage> {
                           vertical: 16,
                         ),
                         decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.25),
+                          color: Colors.white.withValues(alpha: 0.25),
                         ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1361,12 +1438,12 @@ class _HomePageState extends State<HomePage> {
                               Container(
                                 padding: const EdgeInsets.all(12),
                                 decoration: BoxDecoration(
-                                  color: Colors.orange.withOpacity(0.2),
+                                  color: Colors.orange.withValues(alpha: 0.2),
                                   borderRadius: BorderRadius.circular(
                                     _SquircleRadii.small,
                                   ),
                                   border: Border.all(
-                                    color: Colors.orange.withOpacity(0.4),
+                                    color: Colors.orange.withValues(alpha: 0.4),
                                     width: 1,
                                   ),
                                 ),
@@ -1400,7 +1477,7 @@ class _HomePageState extends State<HomePage> {
                 CustomPaint(
                   painter: _SquircleBorderPainter(
                     radius: _SquircleRadii.large,
-                    color: Colors.white.withOpacity(0.5),
+                    color: Colors.white.withValues(alpha: 0.5),
                     strokeWidth: 1.5,
                   ),
                   child: ClipPath(
@@ -1415,7 +1492,7 @@ class _HomePageState extends State<HomePage> {
                           vertical: 16,
                         ),
                         decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.25),
+                          color: Colors.white.withValues(alpha: 0.25),
                         ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1465,7 +1542,7 @@ class _HomePageState extends State<HomePage> {
                 CustomPaint(
                   painter: _SquircleBorderPainter(
                     radius: _SquircleRadii.large,
-                    color: Colors.white.withOpacity(0.5),
+                    color: Colors.white.withValues(alpha: 0.5),
                     strokeWidth: 1.5,
                   ),
                   child: ClipPath(
@@ -1482,7 +1559,7 @@ class _HomePageState extends State<HomePage> {
                             try {
                               await platform.invokeMethod('openTutorial');
                             } catch (e) {
-                              print('打开教程失败: $e');
+                              debugPrint('打开教程失败: $e');
                               if (context.mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   const SnackBar(content: Text('打开失败')),
@@ -1490,11 +1567,11 @@ class _HomePageState extends State<HomePage> {
                               }
                             }
                           },
-                          splashColor: Colors.white.withOpacity(0.3),
-                          highlightColor: Colors.white.withOpacity(0.2),
+                          splashColor: Colors.white.withValues(alpha: 0.3),
+                          highlightColor: Colors.white.withValues(alpha: 0.2),
                           child: Container(
                             decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.25),
+                              color: Colors.white.withValues(alpha: 0.25),
                             ),
                             padding: const EdgeInsets.symmetric(
                               vertical: 12,
@@ -1539,7 +1616,7 @@ class _HomePageState extends State<HomePage> {
                 CustomPaint(
                   painter: _SquircleBorderPainter(
                     radius: _SquircleRadii.large,
-                    color: Colors.white.withOpacity(0.5),
+                    color: Colors.white.withValues(alpha: 0.5),
                     strokeWidth: 1.5,
                   ),
                   child: ClipPath(
@@ -1556,7 +1633,7 @@ class _HomePageState extends State<HomePage> {
                             try {
                               await platform.invokeMethod('openCoolApkProfile');
                             } catch (e) {
-                              print('打开酷安主页失败: $e');
+                              debugPrint('打开酷安主页失败: $e');
                               if (context.mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
@@ -1570,11 +1647,11 @@ class _HomePageState extends State<HomePage> {
                               }
                             }
                           },
-                          splashColor: Colors.white.withOpacity(0.3),
-                          highlightColor: Colors.white.withOpacity(0.2),
+                          splashColor: Colors.white.withValues(alpha: 0.3),
+                          highlightColor: Colors.white.withValues(alpha: 0.2),
                           child: Container(
                             decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.25),
+                              color: Colors.white.withValues(alpha: 0.25),
                             ),
                             padding: const EdgeInsets.symmetric(
                               vertical: 12,
@@ -1632,7 +1709,7 @@ class _HomePageState extends State<HomePage> {
                 CustomPaint(
                   painter: _SquircleBorderPainter(
                     radius: _SquircleRadii.large,
-                    color: Colors.white.withOpacity(0.5),
+                    color: Colors.white.withValues(alpha: 0.5),
                     strokeWidth: 1.5,
                   ),
                   child: ClipPath(
@@ -1651,7 +1728,7 @@ class _HomePageState extends State<HomePage> {
                                 'openCoolApkProfileXmz',
                               );
                             } catch (e) {
-                              print('打开酷安主页失败: $e');
+                              debugPrint('打开酷安主页失败: $e');
                               if (context.mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
@@ -1665,11 +1742,11 @@ class _HomePageState extends State<HomePage> {
                               }
                             }
                           },
-                          splashColor: Colors.white.withOpacity(0.3),
-                          highlightColor: Colors.white.withOpacity(0.2),
+                          splashColor: Colors.white.withValues(alpha: 0.3),
+                          highlightColor: Colors.white.withValues(alpha: 0.2),
                           child: Container(
                             decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.25),
+                              color: Colors.white.withValues(alpha: 0.25),
                             ),
                             padding: const EdgeInsets.symmetric(
                               vertical: 12,
@@ -1731,7 +1808,7 @@ class _HomePageState extends State<HomePage> {
                       child: CustomPaint(
                         painter: _SquircleBorderPainter(
                           radius: _SquircleRadii.large,
-                          color: Colors.white.withOpacity(0.5),
+                          color: Colors.white.withValues(alpha: 0.5),
                           strokeWidth: 1.5,
                         ),
                         child: ClipPath(
@@ -1750,7 +1827,7 @@ class _HomePageState extends State<HomePage> {
                                       'openDonationPage',
                                     );
                                   } catch (e) {
-                                    print('打开打赏页面失败: $e');
+                                    debugPrint('打开打赏页面失败: $e');
                                     if (context.mounted) {
                                       ScaffoldMessenger.of(
                                         context,
@@ -1766,11 +1843,15 @@ class _HomePageState extends State<HomePage> {
                                     }
                                   }
                                 },
-                                splashColor: Colors.white.withOpacity(0.3),
-                                highlightColor: Colors.white.withOpacity(0.2),
+                                splashColor: Colors.white.withValues(
+                                  alpha: 0.3,
+                                ),
+                                highlightColor: Colors.white.withValues(
+                                  alpha: 0.2,
+                                ),
                                 child: Container(
                                   decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.25),
+                                    color: Colors.white.withValues(alpha: 0.25),
                                   ),
                                   padding: const EdgeInsets.symmetric(
                                     vertical: 12,
@@ -1809,7 +1890,7 @@ class _HomePageState extends State<HomePage> {
                       child: CustomPaint(
                         painter: _SquircleBorderPainter(
                           radius: _SquircleRadii.large,
-                          color: Colors.white.withOpacity(0.5),
+                          color: Colors.white.withValues(alpha: 0.5),
                           strokeWidth: 1.5,
                         ),
                         child: ClipPath(
@@ -1826,7 +1907,7 @@ class _HomePageState extends State<HomePage> {
                                   try {
                                     await platform.invokeMethod('openQQGroup');
                                   } catch (e) {
-                                    print('打开交流群页面失败: $e');
+                                    debugPrint('打开交流群页面失败: $e');
                                     if (context.mounted) {
                                       ScaffoldMessenger.of(
                                         context,
@@ -1842,11 +1923,15 @@ class _HomePageState extends State<HomePage> {
                                     }
                                   }
                                 },
-                                splashColor: Colors.white.withOpacity(0.3),
-                                highlightColor: Colors.white.withOpacity(0.2),
+                                splashColor: Colors.white.withValues(
+                                  alpha: 0.3,
+                                ),
+                                highlightColor: Colors.white.withValues(
+                                  alpha: 0.2,
+                                ),
                                 child: Container(
                                   decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.25),
+                                    color: Colors.white.withValues(alpha: 0.25),
                                   ),
                                   padding: const EdgeInsets.symmetric(
                                     vertical: 12,
@@ -1948,26 +2033,27 @@ class _HomePageState extends State<HomePage> {
       final rotation = await platform.invokeMethod('getDisplayRotation', {
         'displayId': 1,
       });
+      if (!mounted) return;
       if (rotation != null && rotation >= 0) {
         setState(() {
           _currentRotation = rotation;
         });
       }
     } catch (e) {
-      print('获取旋转方向失败: $e');
+      debugPrint('获取旋转方向失败: $e');
     }
   }
 
   // V2.1: 设置旋转方向
   Future<void> _setRotation(int rotation) async {
-    print('[Flutter] 🔄 开始设置旋转: $rotation (${rotation * 90}°)');
+    debugPrint('[Flutter] 🔄 开始设置旋转: $rotation (${rotation * 90}°)');
 
-    if (!_shizukuRunning) {
-      print('[Flutter] ❌ Shizuku未运行');
+    if (!_privilegeRunning) {
+      debugPrint('[Flutter] ❌ Shizuku未运行');
       return;
     }
     if (_isLoading) {
-      print('[Flutter] ⚠️ 正在加载中，跳过');
+      debugPrint('[Flutter] ⚠️ 正在加载中，跳过');
       return;
     }
 
@@ -1975,25 +2061,25 @@ class _HomePageState extends State<HomePage> {
 
     try {
       // 确保TaskService连接
-      print('[Flutter] 🔗 确保TaskService连接...');
+      debugPrint('[Flutter] 🔗 确保TaskService连接...');
       final connected = await platform.invokeMethod(
         'ensureTaskServiceConnected',
       );
-      print('[Flutter] 🔗 TaskService连接状态: $connected');
+      debugPrint('[Flutter] 🔗 TaskService连接状态: $connected');
       await Future.delayed(const Duration(milliseconds: 500));
 
-      print(
+      debugPrint(
         '[Flutter] 📡 调用setDisplayRotation: displayId=1, rotation=$rotation',
       );
       final result = await platform.invokeMethod('setDisplayRotation', {
         'displayId': 1,
         'rotation': rotation,
       });
-      print('[Flutter] 📡 setDisplayRotation返回: $result');
+      debugPrint('[Flutter] 📡 setDisplayRotation返回: $result');
 
       if (result == true) {
         setState(() => _currentRotation = rotation);
-        print('[Flutter] ✅ 旋转成功: ${rotation * 90}°');
+        debugPrint('[Flutter] ✅ 旋转成功: ${rotation * 90}°');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -2005,7 +2091,7 @@ class _HomePageState extends State<HomePage> {
           );
         }
       } else {
-        print('[Flutter] ❌ 旋转失败: result=$result');
+        debugPrint('[Flutter] ❌ 旋转失败: result=$result');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -2017,7 +2103,7 @@ class _HomePageState extends State<HomePage> {
         }
       }
     } catch (e) {
-      print('[Flutter] ❌ 旋转异常: $e');
+      debugPrint('[Flutter] ❌ 旋转异常: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -2029,7 +2115,7 @@ class _HomePageState extends State<HomePage> {
       }
     } finally {
       setState(() => _isLoading = false);
-      print('[Flutter] 🏁 旋转操作结束');
+      debugPrint('[Flutter] 🏁 旋转操作结束');
     }
   }
 }
@@ -2055,8 +2141,8 @@ class _GradientToggleState extends State<_GradientToggle> {
         onTap: () => widget.onChanged(!widget.value),
         onHighlightChanged: (h) => setState(() => _pressed = h),
         customBorder: _SquircleShapeBorder(cornerRadius: _SquircleRadii.tiny),
-        splashColor: Colors.white.withOpacity(0.2),
-        highlightColor: Colors.white.withOpacity(0.1),
+        splashColor: Colors.white.withValues(alpha: 0.2),
+        highlightColor: Colors.white.withValues(alpha: 0.1),
         child: ClipPath(
           clipper: _SquircleClipper(cornerRadius: _SquircleRadii.tiny),
           child: SizedBox(
@@ -2065,7 +2151,7 @@ class _GradientToggleState extends State<_GradientToggle> {
             child: Stack(
               children: [
                 // Base background
-                Container(color: Colors.white.withOpacity(0.25)),
+                Container(color: Colors.white.withValues(alpha: 0.25)),
                 // Gradient overlay with fade
                 AnimatedOpacity(
                   duration: const Duration(milliseconds: 220),
@@ -2109,7 +2195,7 @@ class _GradientToggleState extends State<_GradientToggle> {
                           borderRadius: BorderRadius.circular(11),
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withOpacity(0.15),
+                              color: Colors.black.withValues(alpha: 0.15),
                               blurRadius: 3,
                               offset: const Offset(0, 1),
                             ),
@@ -2241,7 +2327,7 @@ class _GradientCheckboxState extends State<_GradientCheckbox> {
             child: Stack(
               children: [
                 // 底层半透明背景
-                Container(color: Colors.white.withOpacity(0.25)),
+                Container(color: Colors.white.withValues(alpha: 0.25)),
                 // 渐变层（淡入淡出）
                 AnimatedOpacity(
                   duration: const Duration(milliseconds: 200),
@@ -2268,7 +2354,7 @@ class _GradientCheckboxState extends State<_GradientCheckbox> {
                   child: CustomPaint(
                     painter: _SquircleBorderPainter(
                       radius: _SquircleRadii.checkbox,
-                      color: Colors.white.withOpacity(0.4),
+                      color: Colors.white.withValues(alpha: 0.4),
                       strokeWidth: 2,
                     ),
                   ),
@@ -2623,7 +2709,7 @@ class _AppSelectionPageState extends State<AppSelectionPage> {
 
   // 启动权限检查循环（后台异步）
   void _startPermissionCheckLoop() async {
-    print('→ 启动权限检查循环');
+    debugPrint('→ 启动权限检查循环');
     int checkAttempts = 0;
 
     while (checkAttempts < 30 && mounted) {
@@ -2637,7 +2723,7 @@ class _AppSelectionPageState extends State<AppSelectionPage> {
           'checkQueryAllPackagesPermission',
         );
         if (granted) {
-          print('✓ 权限已授予，自动刷新应用列表');
+          debugPrint('✓ 权限已授予，自动刷新应用列表');
 
           // 权限已授予，刷新列表
           if (mounted) {
@@ -2646,6 +2732,7 @@ class _AppSelectionPageState extends State<AppSelectionPage> {
             });
 
             await _loadAppsInternal();
+            if (!mounted) return;
 
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
@@ -2660,13 +2747,13 @@ class _AppSelectionPageState extends State<AppSelectionPage> {
           return; // 成功，退出循环
         }
       } catch (e) {
-        print('权限检查失败: $e');
+        debugPrint('权限检查失败: $e');
       }
 
       checkAttempts++;
     }
 
-    print('⚠ 权限检查超时（30秒），用户可能未授予权限');
+    debugPrint('⚠ 权限检查超时（30秒），用户可能未授予权限');
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -2700,9 +2787,9 @@ class _AppSelectionPageState extends State<AppSelectionPage> {
 
       _applyFilters();
 
-      print('已加载 ${_apps.length} 个应用');
+      debugPrint('已加载 ${_apps.length} 个应用');
     } catch (e) {
-      print('加载应用列表失败: $e');
+      debugPrint('加载应用列表失败: $e');
       setState(() {
         _isLoading = false;
       });
@@ -2769,7 +2856,7 @@ class _AppSelectionPageState extends State<AppSelectionPage> {
         _selectedApps.toList(),
       );
     } catch (e) {
-      print('批量全选保存失败: $e');
+      debugPrint('批量全选保存失败: $e');
     }
   }
 
@@ -2788,7 +2875,7 @@ class _AppSelectionPageState extends State<AppSelectionPage> {
         _selectedApps.toList(),
       );
     } catch (e) {
-      print('批量全不选保存失败: $e');
+      debugPrint('批量全不选保存失败: $e');
     }
   }
 
@@ -2797,14 +2884,14 @@ class _AppSelectionPageState extends State<AppSelectionPage> {
 
     try {
       // ✅ 主动检查QUERY_ALL_PACKAGES权限
-      print('🔍 开始检查QUERY_ALL_PACKAGES权限...');
+      debugPrint('🔍 开始检查QUERY_ALL_PACKAGES权限...');
       final bool hasPermission = await platform.invokeMethod(
         'checkQueryAllPackagesPermission',
       );
-      print('🔍 权限检查结果: $hasPermission');
+      debugPrint('🔍 权限检查结果: $hasPermission');
 
       if (!hasPermission) {
-        print('❌ 没有QUERY_ALL_PACKAGES权限，显示弹窗');
+        debugPrint('❌ 没有QUERY_ALL_PACKAGES权限，显示弹窗');
         // 没有权限，弹窗提示并跳转到设置
         setState(() => _isLoading = false);
 
@@ -2850,7 +2937,7 @@ class _AppSelectionPageState extends State<AppSelectionPage> {
       // ✅ 有权限，继续加载
       await _loadAppsInternal();
     } catch (e) {
-      print('加载应用列表失败: $e');
+      debugPrint('加载应用列表失败: $e');
       setState(() => _isLoading = false);
     }
   }
@@ -2874,7 +2961,7 @@ class _AppSelectionPageState extends State<AppSelectionPage> {
         _selectedApps.toList(),
       );
     } catch (e) {
-      print('保存选择失败: $e');
+      debugPrint('保存选择失败: $e');
     }
   }
 
@@ -2937,7 +3024,7 @@ class _AppSelectionPageState extends State<AppSelectionPage> {
                       CustomPaint(
                         painter: _SquircleBorderPainter(
                           radius: 32,
-                          color: Colors.white.withOpacity(0.5),
+                          color: Colors.white.withValues(alpha: 0.5),
                           strokeWidth: 1.5,
                         ),
                         child: ClipPath(
@@ -2952,7 +3039,7 @@ class _AppSelectionPageState extends State<AppSelectionPage> {
                                 vertical: 12,
                               ),
                               decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.25),
+                                color: Colors.white.withValues(alpha: 0.25),
                               ),
                               child: Column(
                                 children: [
@@ -3117,10 +3204,10 @@ class _AppSelectionPageState extends State<AppSelectionPage> {
                       // 应用列表
                       Expanded(
                         child: ListView.builder(
+                          scrollCacheExtent: ScrollCacheExtent.pixels(500),
                           itemCount: _visibleApps.length,
                           padding: const EdgeInsets.symmetric(vertical: 8),
                           itemExtent: 72,
-                          cacheExtent: 500,
                           addAutomaticKeepAlives: false,
                           addRepaintBoundaries: true,
                           physics: const ClampingScrollPhysics(),
@@ -3203,7 +3290,7 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
         _durationController.text = _notificationDuration.toString();
       });
     } catch (e) {
-      print('加载通知设置失败: $e');
+      debugPrint('加载通知设置失败: $e');
     }
   }
 
@@ -3218,7 +3305,7 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
         _privacyHideTitle = enabled;
       });
     } catch (e) {
-      print('切换隐藏标题失败: $e');
+      debugPrint('切换隐藏标题失败: $e');
     }
   }
 
@@ -3233,7 +3320,7 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
         _privacyHideContent = enabled;
       });
     } catch (e) {
-      print('切换隐藏内容失败: $e');
+      debugPrint('切换隐藏内容失败: $e');
     }
   }
 
@@ -3246,7 +3333,7 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
         _followDndMode = enabled;
       });
     } catch (e) {
-      print('切换勿扰模式设置失败: $e');
+      debugPrint('切换勿扰模式设置失败: $e');
     }
   }
 
@@ -3259,7 +3346,7 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
         _onlyWhenLocked = enabled;
       });
     } catch (e) {
-      print('切换倒扣手机通知设置失败: $e');
+      debugPrint('切换倒扣手机通知设置失败: $e');
     }
   }
 
@@ -3274,7 +3361,7 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
         _notificationDarkMode = enabled;
       });
     } catch (e) {
-      print('切换通知暗夜模式失败: $e');
+      debugPrint('切换通知暗夜模式失败: $e');
     }
   }
 
@@ -3300,7 +3387,7 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
         );
       }
     } catch (e) {
-      print('设置通知销毁时间失败: $e');
+      debugPrint('设置通知销毁时间失败: $e');
     }
   }
 
@@ -3342,7 +3429,7 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
               CustomPaint(
                 painter: _SquircleBorderPainter(
                   radius: 32,
-                  color: Colors.white.withOpacity(0.5),
+                  color: Colors.white.withValues(alpha: 0.5),
                   strokeWidth: 1.5,
                 ),
                 child: ClipPath(
@@ -3355,7 +3442,7 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
                         vertical: 16,
                       ),
                       decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.25),
+                        color: Colors.white.withValues(alpha: 0.25),
                       ),
                       child: Column(
                         children: [
@@ -3425,7 +3512,7 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
               CustomPaint(
                 painter: _SquircleBorderPainter(
                   radius: 32,
-                  color: Colors.white.withOpacity(0.5),
+                  color: Colors.white.withValues(alpha: 0.5),
                   strokeWidth: 1.5,
                 ),
                 child: ClipPath(
@@ -3438,7 +3525,7 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
                         vertical: 16,
                       ),
                       decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.25),
+                        color: Colors.white.withValues(alpha: 0.25),
                       ),
                       child: Row(
                         children: [
@@ -3476,7 +3563,7 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
               CustomPaint(
                 painter: _SquircleBorderPainter(
                   radius: 32,
-                  color: Colors.white.withOpacity(0.5),
+                  color: Colors.white.withValues(alpha: 0.5),
                   strokeWidth: 1.5,
                 ),
                 child: ClipPath(
@@ -3489,7 +3576,7 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
                         vertical: 16,
                       ),
                       decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.25),
+                        color: Colors.white.withValues(alpha: 0.25),
                       ),
                       child: Row(
                         children: [
@@ -3527,7 +3614,7 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
               CustomPaint(
                 painter: _SquircleBorderPainter(
                   radius: 32,
-                  color: Colors.white.withOpacity(0.5),
+                  color: Colors.white.withValues(alpha: 0.5),
                   strokeWidth: 1.5,
                 ),
                 child: ClipPath(
@@ -3540,7 +3627,7 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
                         vertical: 16,
                       ),
                       decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.25),
+                        color: Colors.white.withValues(alpha: 0.25),
                       ),
                       child: Row(
                         children: [
@@ -3578,7 +3665,7 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
               CustomPaint(
                 painter: _SquircleBorderPainter(
                   radius: 32,
-                  color: Colors.white.withOpacity(0.5),
+                  color: Colors.white.withValues(alpha: 0.5),
                   strokeWidth: 1.5,
                 ),
                 child: ClipPath(
@@ -3588,7 +3675,7 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
                     child: Container(
                       padding: const EdgeInsets.all(20),
                       decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.25),
+                        color: Colors.white.withValues(alpha: 0.25),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,

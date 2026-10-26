@@ -3,9 +3,9 @@
  * QQ: 319641317
  * Github: https://github.com/GoldenglowSusie/
  * Bilibili: 罗德岛T0驭械术师澄闪
- * 
+ *
  * Chief Tester: 汐木泽
- * 
+ *
  * Co-developed with AI assistants:
  * - Cursor
  * - Claude-4.5-Sonnet
@@ -36,20 +36,18 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
-import android.os.RemoteException;
 import android.util.Log;
 import android.widget.Toast;
 import androidx.core.app.NotificationCompat;
-import rikka.shizuku.Shizuku;
 
 /**
  * 前台Service - 保持背屏常亮
- * 
+ *
  * 为什么用Service而不是Activity：
  * - Activity方案失败了3次（FLAG_NOT_FOCUSABLE、屏幕外、alpha=0都会被onStop）
  * - Service不会被onPause/onStop，系统很难杀死前台Service
  * - 可以直接持有WakeLock保持屏幕常亮
- * 
+ *
  * 注意：WakeLock可能会让两个屏幕都保持常亮（无法指定特定display）
  */
 public class RearScreenKeeperService extends Service implements SensorEventListener {
@@ -234,7 +232,7 @@ public class RearScreenKeeperService extends Service implements SensorEventListe
 
             // 在后台线程执行耗时操作，不阻塞通知显示
             new Thread(() -> {
-                // 绑定Shizuku TaskService
+                // 绑定授权 TaskService
                 bindTaskService();
 
                 // 初始化接近传感器
@@ -445,7 +443,7 @@ public class RearScreenKeeperService extends Service implements SensorEventListe
     };
 
     /**
-     * 绑定Shizuku TaskService
+     * 绑定授权 TaskService
      */
     private void bindTaskService() {
         if (taskService != null) {
@@ -453,14 +451,7 @@ public class RearScreenKeeperService extends Service implements SensorEventListe
         }
 
         try {
-            Shizuku.UserServiceArgs args = new Shizuku.UserServiceArgs(
-                    new ComponentName(getPackageName(), TaskService.class.getName()))
-                    .daemon(false)
-                    .processNameSuffix("task_service")
-                    .debuggable(false)
-                    .version(1);
-
-            Shizuku.bindUserService(args, taskServiceConnection);
+            PrivilegedAccess.bindTaskService(taskServiceConnection);
         } catch (Exception e) {
             Log.e(TAG, "✗ Failed to bind TaskService", e);
         }
@@ -470,22 +461,12 @@ public class RearScreenKeeperService extends Service implements SensorEventListe
      * 解绑TaskService
      */
     private void unbindTaskService() {
-        if (taskService != null) {
-            try {
-                Shizuku.unbindUserService(
-                        new Shizuku.UserServiceArgs(
-                                new ComponentName(getPackageName(), TaskService.class.getName()))
-                                .daemon(false)
-                                .processNameSuffix("task_service")
-                                .debuggable(false)
-                                .version(1),
-                        taskServiceConnection,
-                        true);
-            } catch (Exception e) {
-                Log.w(TAG, "Failed to unbind TaskService", e);
-            }
-            taskService = null;
+        try {
+            PrivilegedAccess.unbindTaskService(taskServiceConnection);
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to unbind TaskService", e);
         }
+        taskService = null;
     }
 
     @Override

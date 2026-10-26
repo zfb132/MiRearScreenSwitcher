@@ -4,6 +4,34 @@
 
 为小米17Pro/17Pro Max等双屏设备的背屏一键切换器
 
+## 本地定制版本 3.3.3
+
+对照仓库 `1e36dc6`（V3.2.0）恢复原有的当前任务迁移流程，移除新增的挖孔设置前置条件，解决 AxManager 已授权但控制中心仍提示切换失败的问题。保留迁移后的显示屏检查，避免把 Binder 返回的错误误报为成功。
+
+- 授权优先级为 **AxManager → Shizuku**。直接调用 AxManager 官方的 `libaxsh.so` 通道，不需要启用 Shizuku 拦截；切换、截图、录屏、通知和常亮等功能使用同一个授权入口。主页显示当前实际使用的授权来源，并支持重新授权及自动重连。
+- 安装并启动 [AxManager](https://github.com/fahrez182/AxManager)，在其 Privilege / 授权管理中允许 MRSS。需要提供 `libaxsh.so` 的版本；旧版本不提供此入口时请更新。AxManager 不可用时回退到已授权的 Shizuku。
+- **强制背屏显示区域尚未实现**：主页明确显示此限制，应用按系统默认布局切换。已删除无效的下拉控件及其调用入口，已有安装数据中的偏好不作改写。
+- 真机确认旧 `MiuiInit.setCutoutMode` 是应用级全局设置，其单向调用不能立即读回，服务端还会结束目标应用，不能用来迁移正在使用的应用。整理版本已删除这套实验代码和周期性恢复逻辑，避免后台继续调用厂商接口。
+- 横竖屏不能单独决定显示范围，应用窗口布局、挖孔适配和 HyperOS 版本也会影响结果。全屏包含摄像头区域与仅摄像头右侧两种强制布局，需要后续采用经真机验证的独立背屏方案。
+
+3.3.2 的真机回归记录（2026-10-23）：Android 17 / HyperOS 4，AxManager 授权。用户手动点击控制中心磁贴后确认哔哩哔哩成功切到背屏；ADB 复核其位于 display 1、窗口 `976×596` 且持续可见，截图内容覆盖摄像头所在区域。已验证 MRSS 的 URI 返回入口可以将同一任务移回 display 0。3.3.3 整理版本通过本机构建与自动检查验证，未重新操作手机；上述真机记录不代表强制显示区域配置已完成。
+
+AxManager 接入依据：[Axeron API 官方接入文档](https://github.com/fahrez182/Axeron-API#without-a-dependency-axmanagers-libaxshso)。
+
+使用本机 Flutter 打包：
+
+```powershell
+flutter pub get
+dart format --output=none --set-exit-if-changed lib test
+flutter analyze --no-pub --fatal-infos
+flutter test --no-pub
+flutter build apk --release --target-platform android-arm64
+```
+
+APK 默认位于 `build/app/outputs/flutter-apk/app-release.apk`。构建配置使用 Gradle 8.14.3、Android Gradle Plugin 8.11.1、Kotlin 2.2.20，Flutter 最低版本为 3.41，本机验证使用 Flutter 3.47.7；建议使用 JDK 17 或 21。没有 `android/key.properties` 时沿用项目原有配置，以 Android 调试证书签署 release APK；与上游安装包签名不同，不能直接覆盖安装。
+
+Windows 上可使用 `scripts/build-android.ps1 -JdkPath '你的 JDK 21 路径'` 一次完成依赖解析、格式及静态检查、Flutter 测试、APK 打包、Android 单元测试和 lint。该脚本从 PATH 查找 Flutter，只为本次构建设置 Java 环境，不修改全局 Flutter 配置。代码规范和验证方式见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
 ## 📄 开源协议
 
 **⚠️ 重要协议变更通知**
@@ -27,7 +55,7 @@
 - ⚡ **充电动画**: 插电时在背屏显示精美的充电动画（3D闪电+流动液体效果）
 - 📢 **通知推送**: 收到通知时自动在背屏显示通知内容（支持应用选择+隐私模式+动态重载）
 - 🔓 **后台可用**: 即使应用在后台也能正常触发切换
-- 🚀 **无需ROOT**: 基于Shizuku实现，无需ROOT权限
+- 🚀 **无需ROOT**: 优先使用 AxManager，也支持 Shizuku，无需ROOT权限
 - 🎨 **精致UI**: Material 3设计，四色渐变UI，精确2.84超椭圆圆角
 - 🛡️ **智能保护**: 防止系统Launcher覆盖投射的应用
 - 💡 **背屏常亮**: 可选的背屏常亮功能，防止自动息屏
@@ -43,7 +71,7 @@
 ## 📋 使用前提
 
 1. **设备要求**: 支持背屏的小米手机（小米17Pro/17Pro Max等双屏设备）
-2. **Shizuku**: 需要安装并启动Shizuku
+2. **授权管理器**: 优先安装并启动 [AxManager](https://github.com/fahrez182/AxManager)，或使用 Shizuku
    - 下载地址: [Shizuku官网](https://shizuku.rikka.app/)
    - 启动方式: ADB或无线调试
 
@@ -52,8 +80,8 @@
 ### 1. 初次设置
 
 1. 安装MRSS应用
-2. 确保Shizuku已启动
-3. 打开MRSS应用，授予Shizuku权限
+2. 确保 AxManager（或备用 Shizuku）已启动
+3. 打开 MRSS，在授权管理器中允许 MRSS
 4. 等待状态显示"一切就绪"
 
 ### 2. 添加快捷开关
@@ -112,7 +140,7 @@
 ## 🔧 技术实现
 
 - **Flutter**: 跨平台UI框架，Material 3设计，四色渐变+精确超椭圆圆角
-- **Shizuku**: 提供shell权限执行特权操作
+- **AxManager / Shizuku**: 优先通过 axsh 提供 shell/root 权限，Shizuku 作为备用
 - **Quick Settings Tile**: Android系统级快捷开关服务（切换/截图/录屏）
 - **ActivityTaskManager**: 通过system service调用实现显示切换
 - **Foreground Service + WakeLock**: 前台服务持有唤醒锁，可选的背屏常亮
@@ -393,5 +421,3 @@ flutter build apk --release --split-per-abi --target-platform android-arm64
 - 如有侵权，请联系删除
 
 ---
-
-

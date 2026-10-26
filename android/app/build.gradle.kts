@@ -41,10 +41,6 @@ android {
         aidl = true
     }
     
-    lint {
-        disable.add("Instantiatable")
-    }
-
     signingConfigs {
         // 仅当 key.properties 存在时才创建 release 签名配置，避免空值强制转换报错
         if (keystorePropertiesFile.exists()) {
@@ -82,6 +78,7 @@ flutter {
 }
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
     // Shizuku API
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")

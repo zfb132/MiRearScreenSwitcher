@@ -3,7 +3,7 @@
  * QQ: 319641317
  * Github: https://github.com/GoldenglowSusie/
  * Bilibili: 罗德岛T0驭械术师澄闪
- * 
+ *
  * Co-developed with AI assistants:
  * - Cursor
  * - Claude-4.5-Sonnet
@@ -16,17 +16,17 @@ package com.tgwgroup.MiRearScreenSwitcher;
 import android.content.Context;
 import android.os.Build;
 import android.util.Log;
-import io.flutter.app.FlutterApplication;
+import android.app.Application;
 import rikka.sui.Sui;
 
 /**
  * 自定义Application - 初始化Shizuku
  */
-public class MyApplication extends FlutterApplication {
-    
+public class MyApplication extends Application {
+
     private static final String TAG = "MyApplication";
     private static boolean isSui = false;
-    
+
     static {
         // 关键！在静态块中初始化Sui
         try {
@@ -35,11 +35,11 @@ public class MyApplication extends FlutterApplication {
             Log.e(TAG, "Sui init failed", e);
         }
     }
-    
+
     @Override
     protected void attachBaseContext(Context base) {
         super.attachBaseContext(base);
-        
+
         // HiddenAPI豁免（Android 9+）
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             try {
@@ -50,14 +50,14 @@ public class MyApplication extends FlutterApplication {
             }
         }
     }
-    
+
     @Override
     public void onCreate() {
         super.onCreate();
+        PrivilegedAccess.init(this);
     }
-    
+
     public static boolean isSui() {
         return isSui;
     }
 }
-

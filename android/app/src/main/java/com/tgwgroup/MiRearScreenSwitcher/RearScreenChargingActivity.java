@@ -147,7 +147,7 @@ public class RearScreenChargingActivity extends Activity {
         applySafeAreaToText(batteryText);
         
         // 设置电量文字
-        batteryText.setText(level + "%");
+        batteryText.setText(getString(R.string.charging_battery_percentage, level));
         
         // 启动全屏液体填充动画（非线性，从0到电量百分比）
         startFullScreenLiquidAnimation(fullScreenLiquid, level);
@@ -181,11 +181,9 @@ public class RearScreenChargingActivity extends Activity {
         finishFilter.addAction("com.tgwgroup.MiRearScreenSwitcher.FINISH_CHARGING_ANIMATION");
         finishFilter.addAction("com.tgwgroup.MiRearScreenSwitcher.INTERRUPT_CHARGING_ANIMATION");
         finishFilter.addAction("com.tgwgroup.MiRearScreenSwitcher.UPDATE_CHARGING_BATTERY");  // V3.5: 监听电量更新
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(finishReceiver, finishFilter, android.content.Context.RECEIVER_NOT_EXPORTED);
-        } else {
-            registerReceiver(finishReceiver, finishFilter);
-        }
+        androidx.core.content.ContextCompat.registerReceiver(
+                this, finishReceiver, finishFilter,
+                androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED);
         
         // 注册LocalBroadcastManager接收器（监听电量更新）
         // androidx.localbroadcastmanager.content.LocalBroadcastManager.getInstance(this).registerReceiver(finishReceiver, finishFilter);
@@ -534,7 +532,7 @@ public class RearScreenChargingActivity extends Activity {
                 // 平滑更新液体填充
                 liquidView.setFillLevel(newLevel / 100f);
                 // 更新数字
-                batteryText.setText(newLevel + "%");
+                batteryText.setText(getString(R.string.charging_battery_percentage, newLevel));
                 Log.d(TAG, "🔋 电量已更新: " + newLevel + "%");
             } else {
                 Log.w(TAG, "⚠️ 视图未找到，无法更新电量 - liquidView=" + (liquidView != null) + ", batteryText=" + (batteryText != null));
